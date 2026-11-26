@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clipper</title>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --text:#e8eaf0; --muted:#9097a6;
+          --accent:#ff3d6e; --ok:#2ecc71; --warn:#f5b041; --bad:#ff5c5c; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { padding:18px 24px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  h1 { margin:0; font-size:20px; letter-spacing:.3px; }
+  h1 span { color:var(--accent); }
+  .pills { display:flex; gap:8px; flex-wrap:wrap; margin-left:auto; }
+  .pill { font-size:12px; padding:3px 9px; border-radius:99px; border:1px solid var(--line); color:var(--muted); }
+  .pill.on { border-color:var(--ok); color:var(--ok); }
+  main { max-width:1200px; margin:0 auto; padding:20px 16px 60px; }
+  form.new { display:flex; gap:10px; flex-wrap:wrap; background:var(--card); padding:16px; border-radius:12px; border:1px solid var(--line); }
+  input, textarea { background:#0c0e12; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:9px 11px; font:inherit; width:100%; }
+  form.new input[name=url] { flex:1 1 380px; width:auto; }
+  form.new input[name=n] { width:90px; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:9px 16px; font:inherit; font-weight:600; cursor:pointer; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--text); }
+  button:disabled { opacity:.5; cursor:default; }
+  h2 { font-size:16px; margin:28px 0 10px; color:var(--muted); font-weight:600; }
+  .job { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 14px; margin-bottom:8px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  .job .t { flex:1 1 300px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .job .s { color:var(--muted); font-size:13px; }
+  .badge { font-size:12px; padding:2px 8px; border-radius:99px; background:#262b36; }
+  .badge.running, .badge.uploading, .badge.queued { background:#3a3220; color:var(--warn); }
+  .badge.done, .badge.posted { background:#1d3528; color:var(--ok); }
+  .badge.failed { background:#3a2020; color:var(--bad); }
+  .err { color:var(--bad); font-size:13px; flex-basis:100%; white-space:pre-wrap; }
+  .tabs { display:flex; gap:6px; flex-wrap:wrap; }
+  .tabs button { background:transparent; border:1px solid var(--line); color:var(--muted); padding:5px 12px; font-weight:500; }
+  .tabs button.active { border-color:var(--accent); color:var(--text); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:16px; margin-top:12px; }
+  .clip { background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; display:flex; flex-direction:column; }
+  .clip video { width:100%; aspect-ratio:9/16; max-height:520px; background:#000; display:block; }
+  .clip .body { padding:12px; display:flex; flex-direction:column; gap:8px; }
+  .meta { display:flex; gap:8px; align-items:center; font-size:13px; color:var(--muted); flex-wrap:wrap; }
+  .score { font-weight:700; color:var(--text); background:#2a1f26; border:1px solid var(--accent); border-radius:6px; padding:1px 7px; }
+  .reason { font-size:13px; color:var(--muted); }
+  label.f { font-size:12px; color:var(--muted); display:block; margin-bottom:3px; }
+  textarea { resize:vertical; min-height:58px; }
+  .plats { display:flex; gap:12px; flex-wrap:wrap; font-size:14px; }
+  .plats label { display:flex; gap:5px; align-items:center; cursor:pointer; }
+  .actions { display:flex; gap:8px; }
+  .ups { display:flex; flex-direction:column; gap:4px; font-size:13px; }
+  .ups a { color:#7fb3ff; }
+  .empty { color:var(--muted); padding:30px; text-align:center; border:1px dashed var(--line); border-radius:12px; margin-top:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>✂️ Clip<span>per</span></h1>
+  <div class="pills" id="pills"></div>
+</header>
+<main>
+  <form class="new" id="newJob">
+    <input name="url" placeholder="Paste a YouTube live stream or video link…" required>
+    <input name="n" type="number" min="1" max="20" value="8" title="Number of clips">
+    <button>Make clips</button>
+  </form>
+
+  <h2>Jobs</h2>
+  <div id="jobs"></div>
+
+  <h2>Clips</h2>
+  <div class="tabs" id="tabs"></div>
+  <div class="grid" id="clips"></div>
+</main>
+
+<script>
+const PLATS = {youtube:"YouTube", instagram:"Instagram", facebook:"Facebook"};
+let status = {}, tab = "review", clipsCache = [], editing = new Set();
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmt = s => { s = Math.round(s); return `${Math.floor(s/3600)}:${String(Math.floor(s%3600/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`; };
+const api = async (url, opts={}) => {
+  const r = await fetch(url, {headers:{"Content-Type":"application/json"}, ...opts});
+  if (!r.ok) { const e = await r.json().catch(()=>({detail:r.statusText})); throw new Error(e.detail); }
+  return r.json();
+};
+
+async function loadStatus() {
+  status = await api("/api/status");
+  $("#pills").innerHTML = Object.entries({claude:"Claude", ...PLATS})
+    .map(([k,v]) => `<span class="pill ${status[k]?"on":""}">${status[k]?"●":"○"} ${v}</span>`).join("");
+}
+
+$("#newJob").onsubmit = async e => {
+  e.preventDefault();
+  const f = e.target;
+  try { await api("/api/jobs", {method:"POST", body:JSON.stringify({url:f.url.value, num_clips:+f.n.value})}); f.url.value=""; refresh(); }
+  catch (err) { alert(err.message); }
+};
+
+async function loadJobs() {
+  const jobs = await api("/api/jobs");
+  $("#jobs").innerHTML = jobs.length ? jobs.map(j => `
+    <div class="job">
+      <span class="badge ${j.status}">${j.status}</span>
+      <span class="t" title="${esc(j.url)}">${esc(j.title || j.url)}</span>
+      <span class="s">${esc(j.stage)}</span>
+      ${j.status==="failed" ? `<button class="ghost" onclick="retryJob(${j.id})">Retry</button><div class="err">${esc(j.error)}</div>` : ""}
+    </div>`).join("") : `<div class="empty">No jobs yet. Paste a link above.</div>`;
+}
+async function retryJob(id) { await api(`/api/jobs/${id}/retry`, {method:"POST"}); refresh(); }
+
+const TABS = {review:"To review", approved:"Approved / posted", rendering:"Rendering", failed:"Failed", rejected:"Rejected"};
+function tabOf(c) { return c.status==="posted" ? "approved" : c.status; }
+
+function renderTabs() {
+  const counts = {};
+  clipsCache.forEach(c => counts[tabOf(c)] = (counts[tabOf(c)]||0) + 1);
+  $("#tabs").innerHTML = Object.entries(TABS).map(([k,v]) =>
+    `<button class="${tab===k?"active":""}" onclick="tab='${k}';renderClips()">${v} (${counts[k]||0})</button>`).join("");
+}
+
+function uploadsHtml(c) {
+  return Object.entries(c.uploads || {}).map(([p,u]) => `
+    <div><span class="badge ${u.status}">${PLATS[p]}: ${u.status}</span>
+    ${u.url ? ` <a href="${esc(u.url)}" target="_blank">open ↗</a>` : ""}
+    ${u.status==="failed" ? ` <span class="err">${esc(u.error)}</span>` : ""}</div>`).join("");
+}
+
+function clipCard(c) {
+  const ups = c.uploads || {};
+  const plats = Object.entries(PLATS).map(([k,v]) => {
+    const st = ups[k]?.status, locked = st==="done" || st==="uploading" || st==="queued";
+    return `<label><input type="checkbox" data-p="${k}" ${!locked && status[k] ? "checked" : ""} ${locked||!status[k] ? "disabled" : ""}> ${v}</label>`;
+  }).join("");
+  const canEdit = c.status === "review" || c.status === "approved";
+  return `
+  <div class="clip" id="clip-${c.id}">
+    ${c.file ? `<video src="${c.file}" poster="${c.thumb}" controls preload="none"></video>` : ""}
+    <div class="body">
+      <div class="meta"><span class="score">${c.score}</span> viral score · ${fmt(c.start)} → ${fmt(c.end)} · ${Math.round(c.end-c.start)}s</div>
+      <div class="reason">${esc(c.reason)}</div>
+      ${c.status==="failed" ? `<div class="err">${esc(c.error)}</div>` : ""}
+      ${canEdit ? `
+        <div><label class="f">Title (YouTube / Facebook)</label><input data-k="title" value="${esc(c.title)}" maxlength="100"></div>
+        <div><label class="f">Caption</label><textarea data-k="caption">${esc(c.caption)}</textarea></div>
+        <div><label class="f">Hashtags</label><input data-k="hashtags" value="${esc(c.hashtags)}"></div>
+        <div class="plats">${plats}</div>
+        <div class="actions">
+          <button onclick="approve(${c.id})">${c.status==="review" ? "Approve & upload" : "Upload to selected"}</button>
+          ${c.status==="review" ? `<button class="ghost" onclick="reject(${c.id})">Reject</button>` : ""}
+        </div>` : `<div><b>${esc(c.title)}</b></div>`}
+      <div class="ups">${uploadsHtml(c)}</div>
+    </div>
+  </div>`;
+}
+
+function renderClips() {
+  renderTabs();
+  const list = clipsCache.filter(c => tabOf(c) === tab);
+  // Don't redraw cards the user is typing in or watching
+  const grid = $("#clips");
+  if (!list.length) { grid.innerHTML = `<div class="empty">Nothing here.</div>`; return; }
+  const existing = new Map([...grid.querySelectorAll(".clip")].map(el => [el.id, el]));
+  const frag = document.createDocumentFragment();
+  for (const c of list) {
+    const id = `clip-${c.id}`, el = existing.get(id);
+    const busy = el && (editing.has(c.id) || (el.querySelector("video") && !el.querySelector("video").paused));
+    if (busy) { el.querySelector(".ups").innerHTML = uploadsHtml(c); frag.appendChild(el); continue; }
+    const tmp = document.createElement("div"); tmp.innerHTML = clipCard(c);
+    const card = tmp.firstElementChild;
+    card.addEventListener("focusin", () => editing.add(c.id));
+    card.addEventListener("focusout", () => setTimeout(() => { if (!card.contains(document.activeElement)) editing.delete(c.id); }, 0));
+    frag.appendChild(card);
+  }
+  grid.innerHTML = ""; grid.appendChild(frag);
+}
+
+async function loadClips() { clipsCache = await api("/api/clips"); renderClips(); }
+
+async function approve(id) {
+  const card = $(`#clip-${id}`);
+  const edits = {}; card.querySelectorAll("[data-k]").forEach(i => edits[i.dataset.k] = i.value);
+  const platforms = [...card.querySelectorAll("[data-p]:checked")].map(i => i.dataset.p);
+  if (!platforms.length) return alert("Select at least one platform.");
+  try {
+    await api(`/api/clips/${id}`, {method:"PATCH", body:JSON.stringify(edits)});
+    await api(`/api/clips/${id}/approve`, {method:"POST", body:JSON.stringify({platforms})});
+    editing.delete(id); refresh();
+  } catch (e) { alert(e.message); }
+}
+async function reject(id) {
+  if (!confirm("Reject and delete this clip?")) return;
+  await api(`/api/clips/${id}/reject`, {method:"POST"}); editing.delete(id); refresh();
+}
+
+async function refresh() { try { await Promise.all([loadJobs(), loadClips()]); } catch (e) { console.error(e); } }
+loadStatus(); refresh(); setInterval(refresh, 4000);
+</script>
+</body>
+</html>

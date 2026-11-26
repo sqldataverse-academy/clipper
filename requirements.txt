@@ -1,0 +1,11 @@
+anthropic>=2.14.0
+yt-dlp>=2026.11.23
+faster-whisper>=1.2.1
+opencv-python-headless>=4.10,<5
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-dotenv>=1.0
+google-api-python-client>=2.150
+google-auth-oauthlib>=1.2
+requests>=2.32
+pydantic>=2.8
